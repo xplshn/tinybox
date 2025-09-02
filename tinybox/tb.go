@@ -1032,7 +1032,11 @@ func FlushInput() {
 }
 
 func SaveBuffer() {
-	if term.savedBuffer == nil || len(term.savedBuffer) != term.height {
+		needRealloc := term.savedBuffer == nil ||
+		len(term.savedBuffer) != term.height ||
+		(len(term.savedBuffer) > 0 && len(term.savedBuffer[0]) != term.width)
+		
+		if needRealloc {
 		term.savedBuffer = make([][]Cell, term.height)
 		for i := range term.savedBuffer {
 			term.savedBuffer[i] = make([]Cell, term.width)

@@ -4,8 +4,6 @@ I needed a simple way to build terminal interfaces in Go. Everything out there w
 
 So I wrote Tinybox. It's one Go file, about 1000 lines. You can read the whole thing in an afternoon. Copy it into your project and modify it however you want. No dependencies, no build systems, no package managers.
 
-<img width="1155" height="960" alt="tbox" src="https://github.com/user-attachments/assets/6e07d8de-b129-4b62-97bd-00cde30b1652" />
-
 <img width="1921" height="960" alt="demo" src="https://github.com/user-attachments/assets/4ed7660e-201c-43d4-9b76-96f925862cad" />
 
 ## What It Does
@@ -44,7 +42,7 @@ make
 ## Design Choices
 
 Everything is in one file because splitting things up is how you end up with 47 files to do something simple. The code reads top to bottom - constants, types, low-level terminal stuff, then the public API. 
-No goroutines, because concurrent terminal access is asking for trouble and you probably don't need it.
+Two background goroutines handle signals; one for terminal resize (SIGWINCH) and one for resume from suspension (SIGCONT). These run in the background but don't do any terminal drawing, just update internal state and queue events. The main program loop is single-threaded.
 No Unicode normalization or grapheme clustering or any of that. The terminal handles displaying Unicode, we just pass it through.
 
 ### Colors 
