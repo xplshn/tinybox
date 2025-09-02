@@ -24,7 +24,7 @@ Here's the simplest possible program:
 
 ```go
 tb.Init()
-defer tui.Close()
+defer tb.Close()
 tb.PrintAt(0, 0, "some string")
 tb.Present()
 tb.PollEvent()  // wait for key
