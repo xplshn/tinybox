@@ -39,9 +39,6 @@ make
 ```
 ./example
 ```
-
-```
-
 ## Design Choices
 
 Everything is in one file because splitting things up is how you end up with 47 files to do something simple. The code reads top to bottom - constants, types, low-level terminal stuff, then the public API. 
