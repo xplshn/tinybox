@@ -1,4 +1,4 @@
-# Tinybox - Minimalist TUI Library
+# Tinybox
 
 I needed a simple way to build terminal interfaces in Go. Everything out there was either massive (tcell), abandoned (termbox), or tried to force some architecture on me (bubbletea with its Elm thing). I just wanted to draw stuff on the screen and read keyboard input without pulling in half the internet.
 
