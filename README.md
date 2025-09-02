@@ -66,5 +66,5 @@ No documentation beyond this README and the code itself. The function names are 
 ## Why Bother?
 
 Sometimes you need a TUI and don't want to deal with ncurses or massive Go libraries. Sometimes you want code you can actually understand. Sometimes smaller is better.
-Tinybox does exactly what it needs to do and nothing more. It's not trying to be everything for everyone. It's a sharp tool that does one thing well, gives you a drawable terminal surface with input handling.
+Tinybox does exactly what it needs to do and nothing more. It's not trying to be everything for everyone.
 If you need more, there are plenty of feature-rich alternatives. If you want less, you probably don't want a TUI at all.
