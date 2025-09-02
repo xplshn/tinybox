@@ -6,6 +6,8 @@ So I wrote Tinybox. It's one Go file, about 1000 lines. You can read the whole t
 
 <img width="1155" height="960" alt="tbox" src="https://github.com/user-attachments/assets/6e07d8de-b129-4b62-97bd-00cde30b1652" />
 
+<img width="1921" height="960" alt="demo" src="https://github.com/user-attachments/assets/4ed7660e-201c-43d4-9b76-96f925862cad" />
+
 ## What It Does
 
 Tinybox gives you raw terminal access which means you get a grid of cells, you put characters in them, you call Present() to update the screen. That's basically the core of it. 
