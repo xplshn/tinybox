@@ -6,15 +6,13 @@ So I wrote Tinybox. It's one Go file, about 1000 lines. You can read the whole t
 
 <img width="1155" height="960" alt="tbox" src="https://github.com/user-attachments/assets/6e07d8de-b129-4b62-97bd-00cde30b1652" />
 
-
-
 ## What It Does
 
-Tinybox gives you raw terminal access. You get a grid of cells, you put characters in them, you call Present() to update the screen. That's the core of it. 
+Tinybox gives you raw terminal access which means you get a grid of cells, you put characters in them, you call Present() to update the screen. That's basically the core of it. 
 
 It handles the annoying parts like entering raw mode, parsing escape sequences, tracking what changed so you're not redrawing everything constantly. Mouse events work. Colors work. You can catch Ctrl-Z properly. The stuff you'd expect.
 
-The API is deliberately small. Init() to start, Close() to cleanup, SetCell() to draw, PollEvent() to read input. Maybe 30 functions total. If you need something that's not there, the code is right there - add it yourself.
+The API is deliberately small. Init() to start, Close() to cleanup, SetCell() to draw, PollEvent() to read input. Maybe 30 functions total. If you need something that's not there, the code is right there - so you can simply add it yourself.
 
 ## How It Works
 
@@ -31,7 +29,7 @@ tb.PrintAt(0, 0, "some string")
 tb.Present()
 tb.PollEvent()  // wait for key
 ```
-Look at example.go if you want to see something more complex. It's a basic system monitor that shows how to handle resize, use colors, and create a simple table layout.
+Look at example.go if you want to see something more complex. It's a basic system monitor that shows how to handle resize, use colors, and create a simple table layout (screenshot).
 The API won't change because there's no version to track. You have the code. If you need it to work differently, change it.
 
 ## Example
@@ -44,16 +42,16 @@ make
 ## Design Choices
 
 Everything is in one file because splitting things up is how you end up with 47 files to do something simple. The code reads top to bottom - constants, types, low-level terminal stuff, then the public API. 
-No goroutines. Concurrent terminal access is asking for trouble and you probably don't need it. If you do, that's your problem to solve.
-No Unicode normalization or grapheme clustering or any of that. The terminal handles displaying Unicode, we just pass it through. If you need proper text shaping, you're using the wrong tool.
-Colors use the 256-color palette because that's what every modern terminal supports. RGB is there if you want it but honestly, 256 colors is plenty.
+No goroutines, because concurrent terminal access is asking for trouble and you probably don't need it.
+No Unicode normalization or grapheme clustering or any of that. The terminal handles displaying Unicode, we just pass it through.
 
-### Other platforms
-The Windows console API is fundamentally different from Unix terminals. Rather than write some abstraction layer that makes both worse, Tinybox just works on Unix. Use WSL if you're on Windows.
+### Colors 
+
+Colors use the 256-color palette because that's what every modern terminal supports. RGB is there if you want it but honestly, 256 colors is plenty.
 
 ## What's Included
 
-The basics are all there. You can draw text anywhere on screen with colors and attributes. Tinybox drawing characters work for making borders and tables. Mouse support includes clicks, drags, and scroll wheels. Terminal resize is handled automatically.
+The basics are all there, which means you can draw text anywhere on screen with colors and attributes. Tinybox drawing characters work for making borders and tables, mouse support includes clicks, drags, and scroll wheels. Terminal resize is handled automatically.
 The dirty cell tracking means it's fast even over SSH. Only the cells that changed get updated. You can build surprisingly complex interfaces and they'll still feel snappy.
 Suspend/resume works properly. Hit Ctrl-Z, do something in the shell, fg back, and your program continues where it left off. The terminal state is saved and restored correctly.
 There's a buffer save/restore mechanism if you need to draw temporary overlays like menus or dialogs. Save the buffer, draw your popup, then restore when done.
