@@ -1,8 +1,8 @@
-# tinybox - Minimalist TUI Library
+# Tinybox - Minimalist TUI Library
 
 I needed a simple way to build terminal interfaces in Go. Everything out there was either massive (tcell), abandoned (termbox), or tried to force some architecture on me (bubbletea with its Elm thing). I just wanted to draw stuff on the screen and read keyboard input without pulling in half the internet.
 
-So I wrote tinybox. It's one Go file, about 1000 lines. You can read the whole thing in an afternoon. Copy it into your project and modify it however you want. No dependencies, no build systems, no package managers.
+So I wrote Tinybox. It's one Go file, about 1000 lines. You can read the whole thing in an afternoon. Copy it into your project and modify it however you want. No dependencies, no build systems, no package managers.
 
 <img width="1278" height="372" alt="tb" src="https://github.com/user-attachments/assets/f2f2ea78-cbbb-49b9-a4e8-76ae04b259de" />
 
@@ -16,7 +16,7 @@ The API is deliberately small. Init() to start, Close() to cleanup, SetCell() to
 
 ## How It Works
 
-The terminal is just a 2D grid of cells. Each cell has a character, foreground color, background color, and some attributes like bold or underline. Box maintains two buffers - what you're drawing to, and what's currently on screen. When you call Present(), it figures out what changed and sends only those updates to the terminal.
+The terminal is just a 2D grid of cells. Each cell has a character, foreground color, background color, and some attributes like bold or underline. Tinybox maintains two buffers - what you're drawing to, and what's currently on screen. When you call Present(), it figures out what changed and sends only those updates to the terminal.
 
 Input comes through as events - keyboard, mouse, resize. The event loop is yours to write. Tinybox just gives you the events, you decide what to do with them. No callbacks, no handlers, no framework nonsense.
 
@@ -29,14 +29,45 @@ tui.PrintAt(0, 0, "some string")
 tui.Present()
 tui.PollEvent()  // wait for key
 ```
+Look at example.go if you want to see something more complex. It's a basic system monitor that shows how to handle resize, use colors, and create a simple table layout.
+The API won't change because there's no version to track. You have the code. If you need it to work differently, change it.
 
 ## Example
-
-Please refer to example.go, it contains a minimal program to fetch some Systemdata and displays said data with tinybox.
-
 ```
 make
 ```
 ```
 ./example
 ```
+
+```
+
+## Design Choices
+
+Everything is in one file because splitting things up is how you end up with 47 files to do something simple. The code reads top to bottom - constants, types, low-level terminal stuff, then the public API. 
+No goroutines. Concurrent terminal access is asking for trouble and you probably don't need it. If you do, that's your problem to solve.
+No Unicode normalization or grapheme clustering or any of that. The terminal handles displaying Unicode, we just pass it through. If you need proper text shaping, you're using the wrong tool.
+Colors use the 256-color palette because that's what every modern terminal supports. RGB is there if you want it but honestly, 256 colors is plenty.
+
+### Other platforms
+The Windows console API is fundamentally different from Unix terminals. Rather than write some abstraction layer that makes both worse, Tinybox just works on Unix. Use WSL if you're on Windows.
+
+## What's Included
+
+The basics are all there. You can draw text anywhere on screen with colors and attributes. Tinybox drawing characters work for making borders and tables. Mouse support includes clicks, drags, and scroll wheels. Terminal resize is handled automatically.
+The dirty cell tracking means it's fast even over SSH. Only the cells that changed get updated. You can build surprisingly complex interfaces and they'll still feel snappy.
+Suspend/resume works properly. Hit Ctrl-Z, do something in the shell, fg back, and your program continues where it left off. The terminal state is saved and restored correctly.
+There's a buffer save/restore mechanism if you need to draw temporary overlays like menus or dialogs. Save the buffer, draw your popup, then restore when done.
+
+## What's Not Included
+
+No widget library. No buttons, text fields, or scroll views. Those are your problem. Tinybox gives you a canvas and input events - what you build is up to you.
+No configuration files. No themes. No plugins. If you want different defaults, change the source.
+No layout managers. You calculate where things go. It's not that hard.
+No documentation beyond this README and the code itself. The function names are clear and the implementation is right there if you need details.
+
+## Why Bother?
+
+Sometimes you need a TUI and don't want to deal with ncurses or massive Go libraries. Sometimes you want code you can actually understand. Sometimes smaller is better.
+Tinybox does exactly what it needs to do and nothing more. It's not trying to be everything for everyone. It's a sharp tool that does one thing well, gives you a drawable terminal surface with input handling.
+If you need more, there are plenty of feature-rich alternatives. If you want less, you probably don't want a TUI at all.
