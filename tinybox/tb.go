@@ -1,0 +1,1108 @@
+/* MIT License
+
+Copyright (c) 2025 Sebastian <sebastian.michalk@pm.me>
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE. */
+
+/* tinybox - minimal tui library */
+
+package tb
+
+import (
+	"fmt"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
+	"unsafe"
+)
+
+const (
+	TCGETS     = 0x5401
+	TCSETS     = 0x5402
+	TIOCGWINSZ = 0x5413
+	TCSANOW    = 0
+	ICANON     = 0x00000002
+	ECHO       = 0x00000008
+	ISIG       = 0x00000001
+	ICRNL      = 0x00000100
+	INPCK      = 0x00000010
+	ISTRIP     = 0x00000020
+	IXON       = 0x00000400
+	OPOST      = 0x00000001
+	CS8        = 0x00000030
+	VMIN       = 6
+	VTIME      = 5
+
+	ESC = "\033"
+	BEL = "\x07"
+
+	ClearScreen     = ESC + "[2J"
+	ClearToEOL      = ESC + "[K"
+	MoveCursor      = ESC + "[%d;%dH"
+	SaveCursor      = ESC + "[s"
+	RestoreCursor   = ESC + "[u"
+	HideCursor      = ESC + "[?25l"
+	ShowCursor      = ESC + "[?25h"
+	AlternateScreen = ESC + "[?1049h"
+	NormalScreen    = ESC + "[?1049l"
+	QueryCursorPos  = ESC + "[6n"
+
+	EnableMouseMode     = ESC + "[?1000h" + ESC + "[?1002h" + ESC + "[?1015h" + ESC + "[?1006h"
+	DisableMouseMode    = ESC + "[?1000l" + ESC + "[?1002l" + ESC + "[?1015l" + ESC + "[?1006l"
+	EnableBracketPaste  = ESC + "[?2004h"
+	DisableBracketPaste = ESC + "[?2004l"
+
+	ResetColor    = ESC + "[0m"
+	SetFgColor    = ESC + "[38;5;%dm"
+	SetBgColor    = ESC + "[48;5;%dm"
+	SetFgColorRGB = ESC + "[38;2;%d;%d;%dm"
+	SetBgColorRGB = ESC + "[48;2;%d;%d;%dm"
+
+	SetBold        = ESC + "[1m"
+	SetItalic      = ESC + "[3m"
+	SetUnderline   = ESC + "[4m"
+	SetReverse     = ESC + "[7m"
+	UnsetBold      = ESC + "[22m"
+	UnsetItalic    = ESC + "[23m"
+	UnsetUnderline = ESC + "[24m"
+	UnsetReverse   = ESC + "[27m"
+
+	BoxTopLeft     = '┌'
+	BoxTopRight    = '┐'
+	BoxBottomLeft  = '└'
+	BoxBottomRight = '┘'
+	BoxHorizontal  = '─'
+	BoxVertical    = '│'
+
+	CursorBlock     = 1
+	CursorLine      = 3
+	CursorUnderline = 5
+)
+
+type termios struct {
+	Iflag  uint32
+	Oflag  uint32
+	Cflag  uint32
+	Lflag  uint32
+	Line   uint8
+	Cc     [32]uint8
+	Ispeed uint32
+	Ospeed uint32
+}
+
+type Cell struct {
+	Ch     rune
+	Fg     int
+	Bg     int
+	FgRGB  [3]uint8
+	BgRGB  [3]uint8
+	Bold   bool
+	Italic bool
+	Under  bool
+	Rev    bool
+	Dirty  bool
+}
+
+type Buffer struct {
+	Width  int
+	Height int
+	Cells  [][]Cell
+}
+
+type Event struct {
+	Type   EventType
+	Key    Key
+	Ch     rune
+	X      int
+	Y      int
+	Button MouseButton
+	Mod    KeyMod
+}
+
+type EventType int
+
+const (
+	EventKey EventType = iota
+	EventMouse
+	EventResize
+	EventPaste
+)
+
+type Key int
+
+const (
+	KeyCtrlC Key = iota + 1
+	KeyCtrlD
+	KeyEscape
+	KeyEnter
+	KeyTab
+	KeyBackspace
+	KeyArrowUp
+	KeyArrowDown
+	KeyArrowLeft
+	KeyArrowRight
+	KeyCtrlA
+	KeyCtrlE
+	KeyCtrlK
+	KeyCtrlU
+	KeyCtrlW
+	KeyF1
+	KeyF2
+	KeyF3
+	KeyF4
+	KeyF5
+	KeyF6
+	KeyF7
+	KeyF8
+	KeyF9
+	KeyF10
+	KeyF11
+	KeyF12
+	KeyHome
+	KeyEnd
+	KeyPageUp
+	KeyPageDown
+	KeyDelete
+)
+
+type KeyMod int
+
+const (
+	ModShift KeyMod = 1 << iota
+	ModAlt
+	ModCtrl
+)
+
+type MouseButton int
+
+const (
+	MouseLeft MouseButton = iota
+	MouseMiddle
+	MouseRight
+	MouseWheelUp
+	MouseWheelDown
+)
+
+type Terminal struct {
+	origTermios   termios
+	buffer        Buffer
+	backBuffer    Buffer
+	savedBuffer   [][]Cell
+	width         int
+	height        int
+	initialized   bool
+	isRaw         bool
+	mouseEnabled  bool
+	pasteEnabled  bool
+	eventQueue    []Event
+	queueSize     int
+	currentFg     int
+	currentBg     int
+	currentFgRGB  [3]uint8
+	currentBgRGB  [3]uint8
+	currentBold   bool
+	currentItalic bool
+	currentUnder  bool
+	currentRev    bool
+	cursorX       int
+	cursorY       int
+	cursorVisible bool
+	cursorStyle   int
+	escDelay      int
+	sigwinchCh    chan os.Signal
+	sigcontCh     chan os.Signal
+}
+
+var term Terminal
+
+func getTermios(fd int) (*termios, error) {
+	var t termios
+	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL, uintptr(fd), TCGETS, uintptr(unsafe.Pointer(&t)))
+	if errno != 0 {
+		return nil, errno
+	}
+	return &t, nil
+}
+
+func setTermios(fd int, t *termios) error {
+	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL, uintptr(fd), TCSETS, uintptr(unsafe.Pointer(t)))
+	if errno != 0 {
+		return errno
+	}
+	return nil
+}
+
+func enableRawMode() error {
+	orig, err := getTermios(syscall.Stdin)
+	if err != nil {
+		return err
+	}
+	term.origTermios = *orig
+
+	raw := *orig
+	raw.Lflag &= ^uint32(ECHO | ICANON | ISIG)
+	raw.Iflag &= ^uint32(ICRNL | INPCK | ISTRIP | IXON)
+	raw.Oflag &= ^uint32(OPOST)
+	raw.Cflag |= CS8
+	raw.Cc[VMIN] = 1
+	raw.Cc[VTIME] = 0
+
+	return setTermios(syscall.Stdin, &raw)
+}
+
+func disableRawMode() error {
+	return setTermios(syscall.Stdin, &term.origTermios)
+}
+
+type winsize struct {
+	Row    uint16
+	Col    uint16
+	Xpixel uint16
+	Ypixel uint16
+}
+
+func getTerminalSize() (int, int, error) {
+	var ws winsize
+	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL, uintptr(syscall.Stdout), TIOCGWINSZ, uintptr(unsafe.Pointer(&ws)))
+	if errno != 0 {
+		return 0, 0, errno
+	}
+	return int(ws.Col), int(ws.Row), nil
+}
+
+func handleSigwinch() {
+	for range term.sigwinchCh {
+		width, height, err := getTerminalSize()
+		if err == nil && (width != term.width || height != term.height) {
+			term.width = width
+			term.height = height
+			term.buffer = initBuffer(width, height)
+			term.backBuffer = initBuffer(width, height)
+
+			if len(term.eventQueue) < cap(term.eventQueue) {
+				term.eventQueue = append(term.eventQueue, Event{Type: EventResize})
+			}
+		}
+	}
+}
+
+func handleSigcont() {
+	for range term.sigcontCh {
+		Resume()
+	}
+}
+
+func writeString(s string) {
+	syscall.Write(syscall.Stdout, []byte(s))
+}
+
+func initBuffer(width, height int) Buffer {
+	cells := make([][]Cell, height)
+	for i := range cells {
+		cells[i] = make([]Cell, width)
+		for j := range cells[i] {
+			cells[i][j] = Cell{Ch: ' ', Fg: 7, Bg: 0, Dirty: true}
+		}
+	}
+	return Buffer{Width: width, Height: height, Cells: cells}
+}
+
+func Init() error {
+	if term.initialized {
+		return fmt.Errorf("terminal already initialized")
+	}
+
+	width, height, err := getTerminalSize()
+	if err != nil {
+		return err
+	}
+
+	err = enableRawMode()
+	if err != nil {
+		return err
+	}
+
+	term.width = width
+	term.height = height
+	term.buffer = initBuffer(width, height)
+	term.backBuffer = initBuffer(width, height)
+	term.eventQueue = make([]Event, 0, 256)
+	term.initialized = true
+	term.isRaw = true
+	term.currentFg = 7
+	term.currentBg = 0
+	term.cursorVisible = true
+	term.cursorStyle = CursorBlock
+	term.escDelay = 25
+
+	term.sigwinchCh = make(chan os.Signal, 1)
+	term.sigcontCh = make(chan os.Signal, 1)
+	signal.Notify(term.sigwinchCh, syscall.SIGWINCH)
+	signal.Notify(term.sigcontCh, syscall.SIGCONT)
+	go handleSigwinch()
+	go handleSigcont()
+
+	writeString(AlternateScreen)
+	writeString(HideCursor)
+	writeString(ClearScreen)
+
+	return nil
+}
+
+func Close() error {
+	if !term.initialized {
+		return nil
+	}
+
+	if term.mouseEnabled {
+		writeString(DisableMouseMode)
+	}
+	if term.pasteEnabled {
+		writeString(DisableBracketPaste)
+	}
+
+	signal.Stop(term.sigwinchCh)
+	signal.Stop(term.sigcontCh)
+	close(term.sigwinchCh)
+	close(term.sigcontCh)
+
+	writeString(ShowCursor)
+	writeString(NormalScreen)
+	writeString(ResetColor)
+
+	err := disableRawMode()
+	term.initialized = false
+	term.isRaw = false
+	return err
+}
+
+func Clear() {
+	term.currentFg = 7
+	term.currentBg = 0
+	term.currentBold = false
+	term.currentItalic = false
+	term.currentUnder = false
+	term.currentRev = false
+
+	for y := 0; y < term.height; y++ {
+		for x := 0; x < term.width; x++ {
+			term.buffer.Cells[y][x] = Cell{Ch: ' ', Fg: 7, Bg: 0, Dirty: true}
+			term.backBuffer.Cells[y][x] = Cell{Ch: 'X', Fg: 0, Bg: 0, Dirty: false}
+		}
+	}
+}
+
+func SetCell(x, y int, ch rune, fg, bg int) {
+	if x < 0 || x >= term.width || y < 0 || y >= term.height {
+		return
+	}
+	cell := &term.buffer.Cells[y][x]
+	if cell.Ch != ch || cell.Fg != fg || cell.Bg != bg ||
+		cell.Bold != term.currentBold || cell.Italic != term.currentItalic ||
+		cell.Under != term.currentUnder || cell.Rev != term.currentRev {
+		cell.Ch = ch
+		cell.Fg = fg
+		cell.Bg = bg
+		cell.Bold = term.currentBold
+		cell.Italic = term.currentItalic
+		cell.Under = term.currentUnder
+		cell.Rev = term.currentRev
+		cell.Dirty = true
+	}
+}
+
+func Present() {
+	var output []byte
+	lastY, lastX := -1, -1
+
+	for y := 0; y < term.height; y++ {
+		for x := 0; x < term.width; x++ {
+			curr := &term.buffer.Cells[y][x]
+			back := &term.backBuffer.Cells[y][x]
+
+			if !curr.Dirty {
+				continue
+			}
+
+			if curr.Ch == back.Ch && curr.Fg == back.Fg && curr.Bg == back.Bg &&
+				curr.Bold == back.Bold && curr.Italic == back.Italic &&
+				curr.Under == back.Under && curr.Rev == back.Rev {
+				curr.Dirty = false
+				continue
+			}
+
+			if lastY != y || lastX != x {
+				output = append(output, []byte(fmt.Sprintf(MoveCursor, y+1, x+1))...)
+			}
+
+			if curr.Bold != back.Bold {
+				if curr.Bold {
+					output = append(output, []byte(SetBold)...)
+				} else {
+					output = append(output, []byte(UnsetBold)...)
+				}
+			}
+			if curr.Italic != back.Italic {
+				if curr.Italic {
+					output = append(output, []byte(SetItalic)...)
+				} else {
+					output = append(output, []byte(UnsetItalic)...)
+				}
+			}
+			if curr.Under != back.Under {
+				if curr.Under {
+					output = append(output, []byte(SetUnderline)...)
+				} else {
+					output = append(output, []byte(UnsetUnderline)...)
+				}
+			}
+			if curr.Rev != back.Rev {
+				if curr.Rev {
+					output = append(output, []byte(SetReverse)...)
+				} else {
+					output = append(output, []byte(UnsetReverse)...)
+				}
+			}
+
+			if curr.Fg != back.Fg {
+				output = append(output, []byte(fmt.Sprintf(SetFgColor, curr.Fg))...)
+			}
+			if curr.Bg != back.Bg {
+				output = append(output, []byte(fmt.Sprintf(SetBgColor, curr.Bg))...)
+			}
+
+			output = append(output, []byte(string(curr.Ch))...)
+
+			if curr.Bg != 0 {
+				output = append(output, []byte(fmt.Sprintf(SetBgColor, 0))...)
+			}
+
+			if curr.Bold || curr.Italic || curr.Under || curr.Rev {
+				if curr.Bold {
+					output = append(output, []byte(UnsetBold)...)
+				}
+				if curr.Italic {
+					output = append(output, []byte(UnsetItalic)...)
+				}
+				if curr.Under {
+					output = append(output, []byte(UnsetUnderline)...)
+				}
+				if curr.Rev {
+					output = append(output, []byte(UnsetReverse)...)
+				}
+			}
+
+			*back = *curr
+			curr.Dirty = false
+			lastY, lastX = y, x+1
+		}
+	}
+
+	output = append(output, []byte(ResetColor)...)
+
+	if term.cursorVisible && (term.cursorX >= 0 && term.cursorY >= 0) {
+		output = append(output, []byte(fmt.Sprintf(MoveCursor, term.cursorY+1, term.cursorX+1))...)
+	}
+
+	if len(output) > 0 {
+		syscall.Write(syscall.Stdout, output)
+	}
+}
+
+func DrawTextLeft(y int, text string, fg, bg int) {
+	for i, ch := range text {
+		if i < term.width {
+			SetCell(i, y, ch, fg, bg)
+		}
+	}
+}
+
+func DrawTextCenter(y int, text string, fg, bg int) {
+	startX := (term.width - len(text)) / 2
+	if startX < 0 {
+		startX = 0
+	}
+	for i, ch := range text {
+		x := startX + i
+		if x < term.width {
+			SetCell(x, y, ch, fg, bg)
+		}
+	}
+}
+
+func DrawTextRight(y int, text string, fg, bg int) {
+	startX := term.width - len(text)
+	if startX < 0 {
+		startX = 0
+	}
+	for i, ch := range text {
+		x := startX + i
+		if x < term.width && x >= 0 {
+			SetCell(x, y, ch, fg, bg)
+		}
+	}
+}
+
+func ClearLine(y int) {
+	for x := 0; x < term.width; x++ {
+		SetCell(x, y, ' ', 7, 0)
+	}
+}
+
+func GetTerminalSize() (width, height int) {
+	return term.width, term.height
+}
+
+func PollEvent() (Event, error) {
+	if len(term.eventQueue) > 0 {
+		evt := term.eventQueue[0]
+		term.eventQueue = term.eventQueue[1:]
+		return evt, nil
+	}
+
+	buf := make([]byte, 16)
+	n, err := syscall.Read(syscall.Stdin, buf)
+	if err != nil {
+		return Event{}, err
+	}
+	if n == 0 {
+		return Event{}, fmt.Errorf("no input")
+	}
+
+	return parseInput(buf[:n])
+}
+
+func PollEventTimeout(timeout time.Duration) (Event, error) {
+	if len(term.eventQueue) > 0 {
+		evt := term.eventQueue[0]
+		term.eventQueue = term.eventQueue[1:]
+		return evt, nil
+	}
+
+	fd := int(syscall.Stdin)
+	fdSet := &syscall.FdSet{}
+	fdSet.Bits[fd/64] |= 1 << (uint(fd) % 64)
+
+	tv := syscall.Timeval{
+		Sec:  int64(timeout / time.Second),
+		Usec: int64((timeout % time.Second) / time.Microsecond),
+	}
+
+	n, err := syscall.Select(fd+1, fdSet, nil, nil, &tv)
+	if err != nil {
+		return Event{}, err
+	}
+	if n == 0 {
+		return Event{}, fmt.Errorf("timeout")
+	}
+
+	return PollEvent()
+}
+
+func parseInput(buf []byte) (Event, error) {
+	if len(buf) == 0 {
+		return Event{}, fmt.Errorf("no input")
+	}
+
+	ch := buf[0]
+
+	if ch == 27 { // ESC
+		if len(buf) == 1 {
+			return Event{Type: EventKey, Key: KeyEscape}, nil
+		}
+		if len(buf) >= 3 && buf[1] == '[' {
+			switch buf[2] {
+			case 'A':
+				return Event{Type: EventKey, Key: KeyArrowUp}, nil
+			case 'B':
+				return Event{Type: EventKey, Key: KeyArrowDown}, nil
+			case 'C':
+				return Event{Type: EventKey, Key: KeyArrowRight}, nil
+			case 'D':
+				return Event{Type: EventKey, Key: KeyArrowLeft}, nil
+			case 'H':
+				return Event{Type: EventKey, Key: KeyHome}, nil
+			case 'F':
+				return Event{Type: EventKey, Key: KeyEnd}, nil
+			case '1':
+				if len(buf) >= 4 && buf[3] == '~' {
+					return Event{Type: EventKey, Key: KeyHome}, nil
+				}
+			case '3':
+				if len(buf) >= 4 && buf[3] == '~' {
+					return Event{Type: EventKey, Key: KeyDelete}, nil
+				}
+			case '5':
+				if len(buf) >= 4 && buf[3] == '~' {
+					return Event{Type: EventKey, Key: KeyPageUp}, nil
+				}
+			case '6':
+				if len(buf) >= 4 && buf[3] == '~' {
+					return Event{Type: EventKey, Key: KeyPageDown}, nil
+				}
+			case 'M':
+				if len(buf) >= 6 {
+					return parseMouseEvent(buf[3:6])
+				}
+			}
+			if len(buf) >= 5 && buf[2] == '1' {
+				switch buf[3] {
+				case '1', '2', '3', '4', '5':
+					if buf[4] == '~' {
+						return Event{Type: EventKey, Key: Key(int(KeyF1) + int(buf[3]-'1'))}, nil
+					}
+				}
+			}
+		}
+		return Event{Type: EventKey, Key: KeyEscape}, nil
+	}
+
+	switch ch {
+	case 1:
+		return Event{Type: EventKey, Key: KeyCtrlA}, nil
+	case 3:
+		return Event{Type: EventKey, Key: KeyCtrlC}, nil
+	case 4:
+		return Event{Type: EventKey, Key: KeyCtrlD}, nil
+	case 5:
+		return Event{Type: EventKey, Key: KeyCtrlE}, nil
+	case 9:
+		return Event{Type: EventKey, Key: KeyTab}, nil
+	case 11:
+		return Event{Type: EventKey, Key: KeyCtrlK}, nil
+	case 13:
+		return Event{Type: EventKey, Key: KeyEnter}, nil
+	case 21:
+		return Event{Type: EventKey, Key: KeyCtrlU}, nil
+	case 23:
+		return Event{Type: EventKey, Key: KeyCtrlW}, nil
+	case 127:
+		return Event{Type: EventKey, Key: KeyBackspace}, nil
+	default:
+		return Event{Type: EventKey, Ch: rune(ch)}, nil
+	}
+}
+
+func parseMouseEvent(buf []byte) (Event, error) {
+	if len(buf) < 3 {
+		return Event{}, fmt.Errorf("incomplete mouse event")
+	}
+
+	b := buf[0] - 32
+	x := int(buf[1]) - 32
+	y := int(buf[2]) - 32
+
+	var button MouseButton
+	switch b & 3 {
+	case 0:
+		button = MouseLeft
+	case 1:
+		button = MouseMiddle
+	case 2:
+		button = MouseRight
+	}
+
+	if b&64 != 0 {
+		if b&1 != 0 {
+			button = MouseWheelDown
+		} else {
+			button = MouseWheelUp
+		}
+	}
+
+	return Event{Type: EventMouse, Button: button, X: x, Y: y}, nil
+}
+
+func EnableMouse() {
+	if !term.mouseEnabled {
+		writeString(EnableMouseMode)
+		term.mouseEnabled = true
+	}
+}
+
+func DisableMouse() {
+	if term.mouseEnabled {
+		writeString(DisableMouseMode)
+		term.mouseEnabled = false
+	}
+}
+
+func EnableBracketedPaste() {
+	if !term.pasteEnabled {
+		writeString(EnableBracketPaste)
+		term.pasteEnabled = true
+	}
+}
+
+func DisableBracketedPaste() {
+	if term.pasteEnabled {
+		writeString(DisableBracketPaste)
+		term.pasteEnabled = false
+	}
+}
+
+func SetColor(fg, bg int) {
+	term.currentFg = fg
+	term.currentBg = bg
+}
+
+func SetColorRGB(fg, bg [3]uint8) {
+	term.currentFgRGB = fg
+	term.currentBgRGB = bg
+}
+
+func SetAttr(bold, italic, underline, reverse bool) {
+	term.currentBold = bold
+	term.currentItalic = italic
+	term.currentUnder = underline
+	term.currentRev = reverse
+}
+
+func ResetAttr() {
+	term.currentBold = false
+	term.currentItalic = false
+	term.currentUnder = false
+	term.currentRev = false
+	term.currentFg = 7
+	term.currentBg = 0
+}
+
+func Size() (width, height int) {
+	return term.width, term.height
+}
+
+func Flush() {
+	Present()
+}
+
+func Fill(x, y, w, h int, ch rune) {
+	for dy := 0; dy < h; dy++ {
+		for dx := 0; dx < w; dx++ {
+			SetCell(x+dx, y+dy, ch, term.currentFg, term.currentBg)
+		}
+	}
+}
+
+func PrintAt(x, y int, text string) {
+	for i, ch := range text {
+		SetCell(x+i, y, ch, term.currentFg, term.currentBg)
+	}
+}
+
+func Box(x, y, w, h int) {
+	if w < 2 || h < 2 {
+		return
+	}
+
+	SetCell(x, y, BoxTopLeft, term.currentFg, term.currentBg)
+	SetCell(x+w-1, y, BoxTopRight, term.currentFg, term.currentBg)
+	SetCell(x, y+h-1, BoxBottomLeft, term.currentFg, term.currentBg)
+	SetCell(x+w-1, y+h-1, BoxBottomRight, term.currentFg, term.currentBg)
+
+	for i := 1; i < w-1; i++ {
+		SetCell(x+i, y, BoxHorizontal, term.currentFg, term.currentBg)
+		SetCell(x+i, y+h-1, BoxHorizontal, term.currentFg, term.currentBg)
+	}
+
+	for i := 1; i < h-1; i++ {
+		SetCell(x, y+i, BoxVertical, term.currentFg, term.currentBg)
+		SetCell(x+w-1, y+i, BoxVertical, term.currentFg, term.currentBg)
+	}
+}
+
+func ClearLineToEOL(y int) {
+	for x := 0; x < term.width; x++ {
+		SetCell(x, y, ' ', 7, 0)
+	}
+}
+
+func ClearRegion(x, y, w, h int) {
+	for dy := 0; dy < h; dy++ {
+		for dx := 0; dx < w; dx++ {
+			SetCell(x+dx, y+dy, ' ', 7, 0)
+		}
+	}
+}
+
+func SaveCursorPos() {
+	writeString(SaveCursor)
+}
+
+func RestoreCursorPos() {
+	writeString(RestoreCursor)
+}
+
+func SetCursorVisible(visible bool) {
+	if visible != term.cursorVisible {
+		term.cursorVisible = visible
+		if visible {
+			writeString(ShowCursor)
+		} else {
+			writeString(HideCursor)
+		}
+	}
+}
+
+func IsRawMode() bool {
+	return term.isRaw
+}
+
+func Bell() {
+	writeString(BEL)
+}
+
+func Suspend() {
+	if !term.initialized {
+		return
+	}
+
+	disableRawMode()
+	term.isRaw = false
+
+	writeString(ClearScreen)
+	writeString(ShowCursor)
+	writeString(NormalScreen)
+
+	syscall.Kill(syscall.Getpid(), syscall.SIGTSTP)
+}
+
+func Resume() {
+	if !term.initialized {
+		return
+	}
+
+	enableRawMode()
+	term.isRaw = true
+
+	writeString(AlternateScreen)
+	if !term.cursorVisible {
+		writeString(HideCursor)
+	}
+	writeString(ClearScreen)
+
+	for y := 0; y < term.height; y++ {
+		for x := 0; x < term.width; x++ {
+			term.buffer.Cells[y][x].Dirty = true
+		}
+	}
+}
+
+func GetCursorPos() (x, y int) {
+	if !term.initialized {
+		return 0, 0
+	}
+
+	writeString(QueryCursorPos)
+
+	buf := make([]byte, 32)
+	fd := int(syscall.Stdin)
+
+	fdSet := &syscall.FdSet{}
+	fdSet.Bits[fd/64] |= 1 << (uint(fd) % 64)
+	tv := syscall.Timeval{Sec: 1, Usec: 0} // 1 second timeout
+
+	n, err := syscall.Select(fd+1, fdSet, nil, nil, &tv)
+	if err != nil || n == 0 {
+		return 0, 0
+	}
+
+	n, err = syscall.Read(syscall.Stdin, buf)
+	if err != nil || n < 6 {
+		return 0, 0
+	}
+
+	// Parse response: \x1b[row;colR
+	response := string(buf[:n])
+	if len(response) >= 6 && response[0] == '\x1b' && response[1] == '[' {
+		var row, col int
+		if _, err := fmt.Sscanf(response[2:], "%d;%dR", &row, &col); err == nil {
+			return col - 1, row - 1 // Convert to 0-based
+		}
+	}
+
+	return 0, 0
+}
+
+func HLine(x, y, length int, ch rune) {
+	for i := 0; i < length; i++ {
+		if x+i < term.width {
+			SetCell(x+i, y, ch, term.currentFg, term.currentBg)
+		}
+	}
+}
+
+func VLine(x, y, length int, ch rune) {
+	for i := 0; i < length; i++ {
+		if y+i < term.height {
+			SetCell(x, y+i, ch, term.currentFg, term.currentBg)
+		}
+	}
+}
+
+func DrawBytes(x, y int, data []byte) {
+	for i, b := range data {
+		if x+i < term.width && x+i >= 0 {
+			SetCell(x+i, y, rune(b), term.currentFg, term.currentBg)
+		}
+	}
+}
+
+func ClearRect(x, y, w, h int) {
+	for dy := 0; dy < h; dy++ {
+		for dx := 0; dx < w; dx++ {
+			if x+dx >= 0 && x+dx < term.width && y+dy >= 0 && y+dy < term.height {
+				SetCell(x+dx, y+dy, ' ', 7, term.currentBg)
+			}
+		}
+	}
+}
+
+func SetCursor(x, y int) {
+	term.cursorX = x
+	term.cursorY = y
+}
+
+func HideCursorFunc() {
+	term.cursorVisible = false
+	writeString(HideCursor)
+}
+
+func ShowCursorFunc() {
+	term.cursorVisible = true
+	writeString(ShowCursor)
+}
+
+func SetCursorStyle(style int) {
+	term.cursorStyle = style
+	writeString(fmt.Sprintf(ESC+"[%d q", style))
+}
+
+func EnableMouseFunc() {
+	if !term.mouseEnabled {
+		writeString(EnableMouseMode)
+		term.mouseEnabled = true
+	}
+}
+
+func DisableMouseFunc() {
+	if term.mouseEnabled {
+		writeString(DisableMouseMode)
+		term.mouseEnabled = false
+	}
+}
+
+func SetInputMode(escDelay int) {
+	term.escDelay = escDelay
+}
+
+func FlushInput() {
+	flags, _, err := syscall.Syscall(syscall.SYS_FCNTL, uintptr(syscall.Stdin), syscall.F_GETFL, 0)
+	if err != 0 {
+		return
+	}
+
+	syscall.Syscall(syscall.SYS_FCNTL, uintptr(syscall.Stdin), syscall.F_SETFL, flags|syscall.O_NONBLOCK)
+
+	buf := make([]byte, 1024)
+	for {
+		_, err := syscall.Read(syscall.Stdin, buf)
+		if err != nil {
+			break
+		}
+	}
+
+	syscall.Syscall(syscall.SYS_FCNTL, uintptr(syscall.Stdin), syscall.F_SETFL, flags)
+}
+
+func SaveBuffer() {
+	if term.savedBuffer == nil || len(term.savedBuffer) != term.height {
+		term.savedBuffer = make([][]Cell, term.height)
+		for i := range term.savedBuffer {
+			term.savedBuffer[i] = make([]Cell, term.width)
+		}
+	}
+
+	for y := 0; y < term.height; y++ {
+		for x := 0; x < term.width; x++ {
+			if y < len(term.buffer.Cells) && x < len(term.buffer.Cells[y]) {
+				term.savedBuffer[y][x] = term.buffer.Cells[y][x]
+			}
+		}
+	}
+}
+
+func RestoreBuffer() {
+	if term.savedBuffer == nil {
+		return
+	}
+
+	for y := 0; y < term.height && y < len(term.savedBuffer); y++ {
+		for x := 0; x < term.width && x < len(term.savedBuffer[y]); x++ {
+			if y < len(term.buffer.Cells) && x < len(term.buffer.Cells[y]) {
+				term.buffer.Cells[y][x] = term.savedBuffer[y][x]
+				term.buffer.Cells[y][x].Dirty = true
+			}
+		}
+	}
+}
+
+func GetCell(x, y int) (ch rune, fg, bg int) {
+	if x < 0 || x >= term.width || y < 0 || y >= term.height {
+		return ' ', 7, 0
+	}
+
+	cell := term.buffer.Cells[y][x]
+	return cell.Ch, cell.Fg, cell.Bg
+}
+
+func Scroll(lines int) {
+	if lines == 0 {
+		return
+	}
+
+	if lines > 0 {
+		for y := term.height - 1; y >= lines; y-- {
+			for x := 0; x < term.width; x++ {
+				term.buffer.Cells[y][x] = term.buffer.Cells[y-lines][x]
+				term.buffer.Cells[y][x].Dirty = true
+			}
+		}
+
+		for y := 0; y < lines && y < term.height; y++ {
+			for x := 0; x < term.width; x++ {
+				term.buffer.Cells[y][x] = Cell{Ch: ' ', Fg: 7, Bg: 0, Dirty: true}
+			}
+		}
+	} else {
+		lines = -lines
+		for y := 0; y < term.height-lines; y++ {
+			for x := 0; x < term.width; x++ {
+				term.buffer.Cells[y][x] = term.buffer.Cells[y+lines][x]
+				term.buffer.Cells[y][x].Dirty = true
+			}
+		}
+
+		for y := term.height - lines; y < term.height; y++ {
+			for x := 0; x < term.width; x++ {
+				term.buffer.Cells[y][x] = Cell{Ch: ' ', Fg: 7, Bg: 0, Dirty: true}
+			}
+		}
+	}
+}
