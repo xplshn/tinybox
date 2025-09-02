@@ -23,11 +23,11 @@ Input comes through as events - keyboard, mouse, resize. The event loop is yours
 Here's the simplest possible program:
 
 ```go
-tui.Init()
+tb.Init()
 defer tui.Close()
-tui.PrintAt(0, 0, "some string")
-tui.Present()
-tui.PollEvent()  // wait for key
+tb.PrintAt(0, 0, "some string")
+tb.Present()
+tb.PollEvent()  // wait for key
 ```
 Look at example.go if you want to see something more complex. It's a basic system monitor that shows how to handle resize, use colors, and create a simple table layout.
 The API won't change because there's no version to track. You have the code. If you need it to work differently, change it.
