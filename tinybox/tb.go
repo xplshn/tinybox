@@ -20,7 +20,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE. */
 
-/* tinybox - minimal tui library */
+/* tinybox */
 
 package tb
 
@@ -28,6 +28,8 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strconv"
+	"strings"
 	"syscall"
 	"time"
 	"unsafe"
@@ -134,6 +136,7 @@ type Event struct {
 	Y      int
 	Button MouseButton
 	Mod    KeyMod
+	Press  bool
 }
 
 type EventType int
@@ -616,6 +619,72 @@ func PollEventTimeout(timeout time.Duration) (Event, error) {
 	return PollEvent()
 }
 
+func parseSGRMouse(buf []byte) (Event, error) {
+	// SGR format: \033[<button;x;y[Mm]
+	if len(buf) < 9 || buf[0] != 27 || buf[1] != '[' || buf[2] != '<' {
+		return Event{}, fmt.Errorf("not SGR mouse format")
+	}
+
+	endIdx := -1
+	press := false
+	for i := 3; i < len(buf); i++ {
+		if buf[i] == 'M' {
+			endIdx = i
+			press = true
+			break
+		} else if buf[i] == 'm' {
+			endIdx = i
+			press = false
+			break
+		}
+	}
+
+	if endIdx == -1 {
+		return Event{}, fmt.Errorf("no SGR terminator found")
+	}
+
+	params := string(buf[3:endIdx])
+	parts := strings.Split(params, ";")
+	if len(parts) != 3 {
+		return Event{}, fmt.Errorf("invalid SGR parameter count")
+	}
+
+	button, err := strconv.Atoi(parts[0])
+	if err != nil {
+		return Event{}, fmt.Errorf("invalid button: %v", err)
+	}
+
+	x, err := strconv.Atoi(parts[1])
+	if err != nil {
+		return Event{}, fmt.Errorf("invalid x: %v", err)
+	}
+
+	y, err := strconv.Atoi(parts[2])
+	if err != nil {
+		return Event{}, fmt.Errorf("invalid y: %v", err)
+	}
+
+	var mouseButton MouseButton
+	switch button & 3 {
+	case 0:
+		mouseButton = MouseLeft
+	case 1:
+		mouseButton = MouseMiddle
+	case 2:
+		mouseButton = MouseRight
+	}
+
+	if button >= 64 {
+		if button&1 != 0 {
+			mouseButton = MouseWheelDown
+		} else {
+			mouseButton = MouseWheelUp
+		}
+	}
+
+	return Event{Type: EventMouse, Button: mouseButton, X: x - 1, Y: y - 1, Press: press}, nil
+}
+
 func parseInput(buf []byte) (Event, error) {
 	if len(buf) == 0 {
 		return Event{}, fmt.Errorf("no input")
@@ -626,6 +695,11 @@ func parseInput(buf []byte) (Event, error) {
 	if ch == 27 { // ESC
 		if len(buf) == 1 {
 			return Event{Type: EventKey, Key: KeyEscape}, nil
+		}
+		if len(buf) >= 6 && buf[1] == '[' && buf[2] == '<' {
+			if evt, err := parseSGRMouse(buf); err == nil {
+				return evt, nil
+			}
 		}
 		if len(buf) >= 3 && buf[1] == '[' {
 			switch buf[2] {
@@ -727,7 +801,7 @@ func parseMouseEvent(buf []byte) (Event, error) {
 		}
 	}
 
-	return Event{Type: EventMouse, Button: button, X: x, Y: y}, nil
+	return Event{Type: EventMouse, Button: button, X: x, Y: y, Press: true}, nil
 }
 
 func EnableMouse() {
@@ -1032,11 +1106,11 @@ func FlushInput() {
 }
 
 func SaveBuffer() {
-		needRealloc := term.savedBuffer == nil ||
+	needRealloc := term.savedBuffer == nil ||
 		len(term.savedBuffer) != term.height ||
 		(len(term.savedBuffer) > 0 && len(term.savedBuffer[0]) != term.width)
-		
-		if needRealloc {
+
+	if needRealloc {
 		term.savedBuffer = make([][]Cell, term.height)
 		for i := range term.savedBuffer {
 			term.savedBuffer[i] = make([]Cell, term.width)

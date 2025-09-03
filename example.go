@@ -9,7 +9,7 @@ import (
 	"runtime"
 	"strings"
 	"syscall"
-	tb "tb-example/tinybox"
+	tb "tinybox-example/tinybox"
 	"time"
 )
 
