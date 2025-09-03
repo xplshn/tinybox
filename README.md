@@ -4,7 +4,10 @@ I needed a simple way to build terminal interfaces in Go. Everything out there w
 
 So I wrote Tinybox. It's one Go file, about 1000 lines. You can read the whole thing in an afternoon. Copy it into your project and modify it however you want. No dependencies, no build systems, no package managers.
 
-<img width="1921" height="960" alt="demo" src="https://github.com/user-attachments/assets/4ed7660e-201c-43d4-9b76-96f925862cad" />
+<img width="1536" height="432" alt="tinyboxsys" src="https://github.com/user-attachments/assets/ae4ade4c-6bec-41a3-b70a-cda44332c1fa" />
+
+<img width="1530" height="478" alt="tetris" src="https://github.com/user-attachments/assets/4c103c15-2b1d-4466-a22d-69de34bb804e" />
+
 
 ## What It Does
 
