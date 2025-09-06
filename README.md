@@ -5,11 +5,10 @@ I needed a simple way to build terminal interfaces in Go. Everything out there w
 So I wrote Tinybox. It's one Go file, about 1000 lines. You can read the whole thing in an afternoon. Copy it into your project and modify it however you want. No dependencies, no build systems, no package managers.
 
 <div align="center">
-<table>
 <tr>
-<td><a href="https://github.com/user-attachments/assets/ae4ade4c-6bec-41a3-b70a-cda44332c1fa"><img width="300" alt="System Monitor" src="https://github.com/user-attachments/assets/ae4ade4c-6bec-41a3-b70a-cda44332c1fa" /></a></td>
-<td><a href="https://github.com/user-attachments/assets/a7d4efb5-66b1-47e6-adc8-46b38fd8feb0"><img width="300" alt="Boxes Demo" src="https://github.com/user-attachments/assets/a7d4efb5-66b1-47e6-adc8-46b38fd8feb0" /></a></td>
-<td><a href="https://github.com/user-attachments/assets/63a2315f-9980-4799-8835-0d75a2e9de47"><img width="300" alt="Tetris Game" src="https://github.com/user-attachments/assets/63a2315f-9980-4799-8835-0d75a2e9de47" /></a></td>
+<td><a href="https://github.com/user-attachments/assets/d1e53971-32e8-4d88-94c2-49b31d1255ca"><img width="300" alt="CGA" src="https://github.com/user-attachments/assets/d1e53971-32e8-4d88-94c2-49b31d1255ca" /></a></td>
+<td><a href="https://github.com/user-attachments/assets/a7d4efb5-66b1-47e6-adc8-46b38fd8feb0"><img width="300" alt="Boxes" src="https://github.com/user-attachments/assets/a7d4efb5-66b1-47e6-adc8-46b38fd8feb0" /></a></td>
+<td><a href="https://github.com/user-attachments/assets/63a2315f-9980-4799-8835-0d75a2e9de47"><img width="300" alt="Tetris" src="https://github.com/user-attachments/assets/63a2315f-9980-4799-8835-0d75a2e9de47" /></a></td>
 </tr>
 </table>
 </div>
