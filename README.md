@@ -18,8 +18,6 @@ Tinybox gives you raw terminal access which means you get a grid of cells, you p
 
 It handles the annoying parts like entering raw mode, parsing escape sequences, tracking what changed so you're not redrawing everything constantly. Mouse events work. Colors work. You can catch Ctrl-Z properly. The stuff you'd expect.
 
-The output path is now tighter: no fmt.Sprintf in the hot loop, we stream bytes directly to the terminal and reuse buffers. Which results in fewer allocations.
-
 The API is deliberately small. Init() to start, Close() to cleanup, SetCell() to draw, PollEvent() to read input. Maybe 30 functions total. If you need something that's not there, the code is right there - so you can simply add it yourself.
 
 ## How It Works
