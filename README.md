@@ -12,12 +12,13 @@ So I wrote Tinybox. It's one Go file, about 1000 lines. You can read the whole t
 </table>
 </div>
 
-
 ## What It Does
 
-Tinybox gives you raw terminal access which means you get a grid of cells, you put characters in them, you call Present() to update the screen. That's basically the core of it. 
+Tinybox gives you raw terminal access which means you get a grid of cells, you put characters in them, you call Present() to update the screen. That's basically the core of it.
 
 It handles the annoying parts like entering raw mode, parsing escape sequences, tracking what changed so you're not redrawing everything constantly. Mouse events work. Colors work. You can catch Ctrl-Z properly. The stuff you'd expect.
+
+The output path is now tighter: no fmt.Sprintf in the hot loop, we stream bytes directly to the terminal and reuse buffers. Which results in fewer allocations.
 
 The API is deliberately small. Init() to start, Close() to cleanup, SetCell() to draw, PollEvent() to read input. Maybe 30 functions total. If you need something that's not there, the code is right there - so you can simply add it yourself.
 
@@ -39,6 +40,8 @@ tb.PollEvent()  // wait for key
 Look at example.go if you want to see something more complex. It's a basic system monitor that shows how to handle resize, use colors, and create a simple table layout (screenshot).
 The API won't change because there's no version to track. You have the code. If you need it to work differently, change it.
 
+There’s also a tiny demo app under `demo/` if you want to poke at the API without writing boilerplate. It uses the same primitives (draw cells, poll events, toggle mouse) and nothing more.
+
 ## Example
 ```
 make
@@ -54,7 +57,7 @@ No Unicode normalization or grapheme clustering or any of that. The terminal han
 
 ### Colors 
 
-Colors use the 256-color palette because that's what every modern terminal supports. RGB is there if you want it but honestly, 256 colors is plenty.
+Colors use the 256-color palette because that's what every modern terminal supports.
 
 ## What's Included
 

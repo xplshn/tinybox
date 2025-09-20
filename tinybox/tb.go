@@ -29,9 +29,9 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
-	"strings"
 	"syscall"
 	"time"
+	"unicode/utf8"
 	"unsafe"
 )
 
@@ -71,11 +71,9 @@ const (
 	EnableBracketPaste  = ESC + "[?2004h"
 	DisableBracketPaste = ESC + "[?2004l"
 
-	ResetColor    = ESC + "[0m"
-	SetFgColor    = ESC + "[38;5;%dm"
-	SetBgColor    = ESC + "[48;5;%dm"
-	SetFgColorRGB = ESC + "[38;2;%d;%d;%dm"
-	SetBgColorRGB = ESC + "[48;2;%d;%d;%dm"
+	ResetColor = ESC + "[0m"
+	SetFgColor = ESC + "[38;5;%dm"
+	SetBgColor = ESC + "[48;5;%dm"
 
 	SetBold        = ESC + "[1m"
 	SetItalic      = ESC + "[3m"
@@ -98,6 +96,18 @@ const (
 	CursorUnderline = 5
 )
 
+var (
+	seqSetBold        = []byte(SetBold)
+	seqUnsetBold      = []byte(UnsetBold)
+	seqSetItalic      = []byte(SetItalic)
+	seqUnsetItalic    = []byte(UnsetItalic)
+	seqSetUnderline   = []byte(SetUnderline)
+	seqUnsetUnderline = []byte(UnsetUnderline)
+	seqSetReverse     = []byte(SetReverse)
+	seqUnsetReverse   = []byte(UnsetReverse)
+	resetColorSeq     = []byte(ResetColor)
+)
+
 type termios struct {
 	Iflag  uint32
 	Oflag  uint32
@@ -113,8 +123,6 @@ type Cell struct {
 	Ch     rune
 	Fg     int
 	Bg     int
-	FgRGB  [3]uint8
-	BgRGB  [3]uint8
 	Bold   bool
 	Italic bool
 	Under  bool
@@ -215,11 +223,8 @@ type Terminal struct {
 	mouseEnabled  bool
 	pasteEnabled  bool
 	eventQueue    []Event
-	queueSize     int
 	currentFg     int
 	currentBg     int
-	currentFgRGB  [3]uint8
-	currentBgRGB  [3]uint8
 	currentBold   bool
 	currentItalic bool
 	currentUnder  bool
@@ -432,8 +437,16 @@ func SetCell(x, y int, ch rune, fg, bg int) {
 }
 
 func Present() {
-	var output []byte
+	if term.width == 0 || term.height == 0 {
+		return
+	}
+
+	output := make([]byte, 0, term.width*term.height)
 	lastY, lastX := -1, -1
+	activeFg, activeBg := -1, -1
+	activeBold, activeItalic, activeUnder, activeRev := false, false, false, false
+	var runeBuf [utf8.UTFMax]byte
+	dirtyWritten := false
 
 	for y := 0; y < term.height; y++ {
 		for x := 0; x < term.width; x++ {
@@ -452,81 +465,109 @@ func Present() {
 			}
 
 			if lastY != y || lastX != x {
-				output = append(output, []byte(fmt.Sprintf(MoveCursor, y+1, x+1))...)
+				output = appendCursorMove(output, y+1, x+1)
 			}
 
-			if curr.Bold != back.Bold {
+			if curr.Bold != activeBold {
 				if curr.Bold {
-					output = append(output, []byte(SetBold)...)
+					output = append(output, seqSetBold...)
 				} else {
-					output = append(output, []byte(UnsetBold)...)
+					output = append(output, seqUnsetBold...)
 				}
+				activeBold = curr.Bold
 			}
-			if curr.Italic != back.Italic {
+			if curr.Italic != activeItalic {
 				if curr.Italic {
-					output = append(output, []byte(SetItalic)...)
+					output = append(output, seqSetItalic...)
 				} else {
-					output = append(output, []byte(UnsetItalic)...)
+					output = append(output, seqUnsetItalic...)
 				}
+				activeItalic = curr.Italic
 			}
-			if curr.Under != back.Under {
+			if curr.Under != activeUnder {
 				if curr.Under {
-					output = append(output, []byte(SetUnderline)...)
+					output = append(output, seqSetUnderline...)
 				} else {
-					output = append(output, []byte(UnsetUnderline)...)
+					output = append(output, seqUnsetUnderline...)
 				}
+				activeUnder = curr.Under
 			}
-			if curr.Rev != back.Rev {
+			if curr.Rev != activeRev {
 				if curr.Rev {
-					output = append(output, []byte(SetReverse)...)
+					output = append(output, seqSetReverse...)
 				} else {
-					output = append(output, []byte(UnsetReverse)...)
+					output = append(output, seqUnsetReverse...)
 				}
+				activeRev = curr.Rev
 			}
 
-			if curr.Fg != back.Fg {
-				output = append(output, []byte(fmt.Sprintf(SetFgColor, curr.Fg))...)
+			if curr.Fg != activeFg {
+				output = appendSet256Color(output, true, curr.Fg)
+				activeFg = curr.Fg
 			}
-			if curr.Bg != back.Bg {
-				output = append(output, []byte(fmt.Sprintf(SetBgColor, curr.Bg))...)
-			}
-
-			output = append(output, []byte(string(curr.Ch))...)
-
-			if curr.Bg != 0 {
-				output = append(output, []byte(fmt.Sprintf(SetBgColor, 0))...)
+			if curr.Bg != activeBg {
+				output = appendSet256Color(output, false, curr.Bg)
+				activeBg = curr.Bg
 			}
 
-			if curr.Bold || curr.Italic || curr.Under || curr.Rev {
-				if curr.Bold {
-					output = append(output, []byte(UnsetBold)...)
-				}
-				if curr.Italic {
-					output = append(output, []byte(UnsetItalic)...)
-				}
-				if curr.Under {
-					output = append(output, []byte(UnsetUnderline)...)
-				}
-				if curr.Rev {
-					output = append(output, []byte(UnsetReverse)...)
-				}
-			}
+			n := utf8.EncodeRune(runeBuf[:], curr.Ch)
+			output = append(output, runeBuf[:n]...)
 
 			*back = *curr
 			curr.Dirty = false
+			dirtyWritten = true
 			lastY, lastX = y, x+1
 		}
 	}
 
-	output = append(output, []byte(ResetColor)...)
+	if dirtyWritten {
+		output = append(output, resetColorSeq...)
+		activeFg, activeBg = 7, 0
+		activeBold, activeItalic, activeUnder, activeRev = false, false, false, false
+	}
 
 	if term.cursorVisible && (term.cursorX >= 0 && term.cursorY >= 0) {
-		output = append(output, []byte(fmt.Sprintf(MoveCursor, term.cursorY+1, term.cursorX+1))...)
+		output = appendCursorMove(output, term.cursorY+1, term.cursorX+1)
 	}
 
 	if len(output) > 0 {
 		syscall.Write(syscall.Stdout, output)
 	}
+}
+
+func appendCursorMove(out []byte, row, col int) []byte {
+	if row < 1 {
+		row = 1
+	}
+	if col < 1 {
+		col = 1
+	}
+	out = append(out, '', '[')
+	out = appendInt(out, row)
+	out = append(out, ';')
+	out = appendInt(out, col)
+	return append(out, 'H')
+}
+
+func appendSet256Color(out []byte, fg bool, value int) []byte {
+	if value < 0 {
+		value = 0
+	} else if value > 255 {
+		value = 255
+	}
+	out = append(out, '', '[')
+	if fg {
+		out = append(out, '3', '8')
+	} else {
+		out = append(out, '4', '8')
+	}
+	out = append(out, ';', '5', ';')
+	out = appendInt(out, value)
+	return append(out, 'm')
+}
+
+func appendInt(out []byte, value int) []byte {
+	return strconv.AppendInt(out, int64(value), 10)
 }
 
 func DrawTextLeft(y int, text string, fg, bg int) {
@@ -580,8 +621,8 @@ func PollEvent() (Event, error) {
 		return evt, nil
 	}
 
-	buf := make([]byte, 16)
-	n, err := syscall.Read(syscall.Stdin, buf)
+	var buf [16]byte
+	n, err := syscall.Read(syscall.Stdin, buf[:])
 	if err != nil {
 		return Event{}, err
 	}
@@ -625,43 +666,44 @@ func parseSGRMouse(buf []byte) (Event, error) {
 		return Event{}, fmt.Errorf("not SGR mouse format")
 	}
 
-	endIdx := -1
-	press := false
-	for i := 3; i < len(buf); i++ {
-		if buf[i] == 'M' {
-			endIdx = i
-			press = true
-			break
-		} else if buf[i] == 'm' {
-			endIdx = i
-			press = false
-			break
-		}
+	i := 3
+	button, next, ok := parseDecimal(buf, i)
+	if !ok {
+		return Event{}, fmt.Errorf("invalid SGR mouse button")
 	}
+	i = next
+	if i >= len(buf) || buf[i] != ';' {
+		return Event{}, fmt.Errorf("invalid SGR mouse separator")
+	}
+	i++
 
-	if endIdx == -1 {
+	x, next, ok := parseDecimal(buf, i)
+	if !ok {
+		return Event{}, fmt.Errorf("invalid SGR mouse x")
+	}
+	i = next
+	if i >= len(buf) || buf[i] != ';' {
+		return Event{}, fmt.Errorf("invalid SGR mouse separator")
+	}
+	i++
+
+	y, next, ok := parseDecimal(buf, i)
+	if !ok {
+		return Event{}, fmt.Errorf("invalid SGR mouse y")
+	}
+	i = next
+	if i >= len(buf) {
 		return Event{}, fmt.Errorf("no SGR terminator found")
 	}
 
-	params := string(buf[3:endIdx])
-	parts := strings.Split(params, ";")
-	if len(parts) != 3 {
-		return Event{}, fmt.Errorf("invalid SGR parameter count")
-	}
-
-	button, err := strconv.Atoi(parts[0])
-	if err != nil {
-		return Event{}, fmt.Errorf("invalid button: %v", err)
-	}
-
-	x, err := strconv.Atoi(parts[1])
-	if err != nil {
-		return Event{}, fmt.Errorf("invalid x: %v", err)
-	}
-
-	y, err := strconv.Atoi(parts[2])
-	if err != nil {
-		return Event{}, fmt.Errorf("invalid y: %v", err)
+	press := false
+	switch buf[i] {
+	case 'M':
+		press = true
+	case 'm':
+		press = false
+	default:
+		return Event{}, fmt.Errorf("invalid SGR mouse terminator")
 	}
 
 	var mouseButton MouseButton
@@ -683,6 +725,26 @@ func parseSGRMouse(buf []byte) (Event, error) {
 	}
 
 	return Event{Type: EventMouse, Button: mouseButton, X: x - 1, Y: y - 1, Press: press}, nil
+}
+
+func parseDecimal(buf []byte, idx int) (value, next int, ok bool) {
+	if idx >= len(buf) {
+		return 0, idx, false
+	}
+	start := idx
+	val := 0
+	for idx < len(buf) {
+		b := buf[idx]
+		if b < '0' || b > '9' {
+			break
+		}
+		val = val*10 + int(b-'0')
+		idx++
+	}
+	if idx == start {
+		return 0, idx, false
+	}
+	return val, idx, true
 }
 
 func parseInput(buf []byte) (Event, error) {
@@ -837,11 +899,6 @@ func SetColor(fg, bg int) {
 	term.currentBg = bg
 }
 
-func SetColorRGB(fg, bg [3]uint8) {
-	term.currentFgRGB = fg
-	term.currentBgRGB = bg
-}
-
 func SetAttr(bold, italic, underline, reverse bool) {
 	term.currentBold = bold
 	term.currentItalic = italic
@@ -902,9 +959,7 @@ func Box(x, y, w, h int) {
 }
 
 func ClearLineToEOL(y int) {
-	for x := 0; x < term.width; x++ {
-		SetCell(x, y, ' ', 7, 0)
-	}
+	ClearLine(y)
 }
 
 func ClearRegion(x, y, w, h int) {
@@ -985,7 +1040,7 @@ func GetCursorPos() (x, y int) {
 
 	writeString(QueryCursorPos)
 
-	buf := make([]byte, 32)
+	var buf [32]byte
 	fd := int(syscall.Stdin)
 
 	fdSet := &syscall.FdSet{}
@@ -997,7 +1052,7 @@ func GetCursorPos() (x, y int) {
 		return 0, 0
 	}
 
-	n, err = syscall.Read(syscall.Stdin, buf)
+	n, err = syscall.Read(syscall.Stdin, buf[:])
 	if err != nil || n < 6 {
 		return 0, 0
 	}
@@ -1054,13 +1109,11 @@ func SetCursor(x, y int) {
 }
 
 func HideCursorFunc() {
-	term.cursorVisible = false
-	writeString(HideCursor)
+	SetCursorVisible(false)
 }
 
 func ShowCursorFunc() {
-	term.cursorVisible = true
-	writeString(ShowCursor)
+	SetCursorVisible(true)
 }
 
 func SetCursorStyle(style int) {
@@ -1069,17 +1122,11 @@ func SetCursorStyle(style int) {
 }
 
 func EnableMouseFunc() {
-	if !term.mouseEnabled {
-		writeString(EnableMouseMode)
-		term.mouseEnabled = true
-	}
+	EnableMouse()
 }
 
 func DisableMouseFunc() {
-	if term.mouseEnabled {
-		writeString(DisableMouseMode)
-		term.mouseEnabled = false
-	}
+	DisableMouse()
 }
 
 func SetInputMode(escDelay int) {
@@ -1094,9 +1141,9 @@ func FlushInput() {
 
 	syscall.Syscall(syscall.SYS_FCNTL, uintptr(syscall.Stdin), syscall.F_SETFL, flags|syscall.O_NONBLOCK)
 
-	buf := make([]byte, 1024)
+	var buf [1024]byte
 	for {
-		_, err := syscall.Read(syscall.Stdin, buf)
+		_, err := syscall.Read(syscall.Stdin, buf[:])
 		if err != nil {
 			break
 		}
