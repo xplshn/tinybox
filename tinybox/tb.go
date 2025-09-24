@@ -39,18 +39,22 @@ const (
 	TCGETS     = 0x5401
 	TCSETS     = 0x5402
 	TIOCGWINSZ = 0x5413
-	TCSANOW    = 0
-	ICANON     = 0x00000002
-	ECHO       = 0x00000008
-	ISIG       = 0x00000001
-	ICRNL      = 0x00000100
-	INPCK      = 0x00000010
-	ISTRIP     = 0x00000020
-	IXON       = 0x00000400
-	OPOST      = 0x00000001
-	CS8        = 0x00000030
+	ICANON     = 0x2
+	ECHO       = 0x8
+	ISIG       = 0x1
+	IEXTEN     = 0x8000
+	BRKINT     = 0x2
+	ICRNL      = 0x100
+	INPCK      = 0x10
+	ISTRIP     = 0x20
+	IXON       = 0x400
+	OPOST      = 0x1
+	CS8        = 0x30
 	VMIN       = 6
 	VTIME      = 5
+	F_GETFL    = 3
+	F_SETFL    = 4
+	O_NONBLOCK = 0x800
 
 	ESC = "\033"
 	BEL = "\x07"
@@ -109,14 +113,14 @@ var (
 )
 
 type termios struct {
-	Iflag  uint32
-	Oflag  uint32
-	Cflag  uint32
-	Lflag  uint32
-	Line   uint8
-	Cc     [32]uint8
-	Ispeed uint32
-	Ospeed uint32
+	Iflag, Oflag, Cflag, Lflag uint32
+	Line                       uint8
+	Cc                         [32]uint8
+	Ispeed, Ospeed             uint32
+}
+
+type winsize struct {
+	Row, Col, Xpixel, Ypixel uint16
 }
 
 type Cell struct {
@@ -242,62 +246,88 @@ var term Terminal
 
 func getTermios(fd int) (*termios, error) {
 	var t termios
-	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL, uintptr(fd), TCGETS, uintptr(unsafe.Pointer(&t)))
-	if errno != 0 {
-		return nil, errno
+	_, _, e := syscall.Syscall(syscall.SYS_IOCTL, uintptr(fd), TCGETS, uintptr(unsafe.Pointer(&t)))
+	if e != 0 {
+		return nil, e
 	}
 	return &t, nil
 }
 
 func setTermios(fd int, t *termios) error {
-	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL, uintptr(fd), TCSETS, uintptr(unsafe.Pointer(t)))
-	if errno != 0 {
-		return errno
+	_, _, e := syscall.Syscall(syscall.SYS_IOCTL, uintptr(fd), TCSETS, uintptr(unsafe.Pointer(t)))
+	if e != 0 {
+		return e
 	}
 	return nil
 }
 
 func enableRawMode() error {
-	orig, err := getTermios(syscall.Stdin)
+	orig, err := getTermios(int(syscall.Stdin))
 	if err != nil {
 		return err
 	}
 	term.origTermios = *orig
-
 	raw := *orig
-	raw.Lflag &= ^uint32(ECHO | ICANON | ISIG)
-	raw.Iflag &= ^uint32(ICRNL | INPCK | ISTRIP | IXON)
+	raw.Lflag &= ^uint32(ECHO | ICANON | ISIG | IEXTEN)
+	raw.Iflag &= ^uint32(BRKINT | ICRNL | INPCK | ISTRIP | IXON)
 	raw.Oflag &= ^uint32(OPOST)
 	raw.Cflag |= CS8
 	raw.Cc[VMIN] = 1
 	raw.Cc[VTIME] = 0
-
-	return setTermios(syscall.Stdin, &raw)
+	return setTermios(int(syscall.Stdin), &raw)
 }
 
 func disableRawMode() error {
-	return setTermios(syscall.Stdin, &term.origTermios)
+	return setTermios(int(syscall.Stdin), &term.origTermios)
 }
 
-type winsize struct {
-	Row    uint16
-	Col    uint16
-	Xpixel uint16
-	Ypixel uint16
-}
+func queryTermSize() (int, int, error) {
+	writeString("\033[999;999H\033[6n")
 
-func getTerminalSize() (int, int, error) {
-	var ws winsize
-	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL, uintptr(syscall.Stdout), TIOCGWINSZ, uintptr(unsafe.Pointer(&ws)))
-	if errno != 0 {
-		return 0, 0, errno
+	var buf [32]byte
+	fd := int(syscall.Stdin)
+
+	fdSet := &syscall.FdSet{}
+	fdSet.Bits[fd/64] |= 1 << (uint(fd) % 64)
+	tv := syscall.Timeval{Sec: 1, Usec: 0}
+
+	n, err := syscall.Select(fd+1, fdSet, nil, nil, &tv)
+	if err != nil || n == 0 {
+		return 80, 24, fmt.Errorf("terminal size query timeout")
 	}
-	return int(ws.Col), int(ws.Row), nil
+
+	n, err = syscall.Read(syscall.Stdin, buf[:])
+	if err != nil || n < 6 {
+		return 80, 24, fmt.Errorf("failed to read terminal response")
+	}
+
+	response := string(buf[:n])
+	if len(response) >= 6 && response[0] == '\x1b' && response[1] == '[' {
+		var row, col int
+		if _, err := fmt.Sscanf(response[2:], "%d;%dR", &row, &col); err == nil {
+			return col, row, nil
+		}
+	}
+	return 80, 24, nil
+}
+
+func getTermSize() (int, int, error) {
+	cols, _ := strconv.Atoi(os.Getenv("COLUMNS"))
+	lines, _ := strconv.Atoi(os.Getenv("LINES"))
+	if cols > 0 && lines > 0 {
+		return cols, lines, nil
+	}
+	var ws winsize
+	_, _, e := syscall.Syscall(syscall.SYS_IOCTL, uintptr(syscall.Stdout), TIOCGWINSZ, uintptr(unsafe.Pointer(&ws)))
+	if e == 0 {
+		return int(ws.Col), int(ws.Row), nil
+	}
+	return queryTermSize()
 }
 
 func handleSigwinch() {
 	for range term.sigwinchCh {
-		width, height, err := getTerminalSize()
+		width, height, err := getTermSize()
 		if err == nil && (width != term.width || height != term.height) {
 			term.width = width
 			term.height = height
@@ -337,7 +367,7 @@ func Init() error {
 		return fmt.Errorf("terminal already initialized")
 	}
 
-	width, height, err := getTerminalSize()
+	width, height, err := getTermSize()
 	if err != nil {
 		return err
 	}
@@ -1134,13 +1164,9 @@ func SetInputMode(escDelay int) {
 }
 
 func FlushInput() {
-	flags, _, err := syscall.Syscall(syscall.SYS_FCNTL, uintptr(syscall.Stdin), syscall.F_GETFL, 0)
-	if err != 0 {
-		return
-	}
-
-	syscall.Syscall(syscall.SYS_FCNTL, uintptr(syscall.Stdin), syscall.F_SETFL, flags|syscall.O_NONBLOCK)
-
+	fd := int(syscall.Stdin)
+	flags, _, _ := syscall.Syscall(syscall.SYS_FCNTL, uintptr(fd), F_GETFL, 0)
+	syscall.Syscall(syscall.SYS_FCNTL, uintptr(fd), F_SETFL, flags|O_NONBLOCK)
 	var buf [1024]byte
 	for {
 		_, err := syscall.Read(syscall.Stdin, buf[:])
@@ -1148,8 +1174,7 @@ func FlushInput() {
 			break
 		}
 	}
-
-	syscall.Syscall(syscall.SYS_FCNTL, uintptr(syscall.Stdin), syscall.F_SETFL, flags)
+	syscall.Syscall(syscall.SYS_FCNTL, uintptr(fd), F_SETFL, flags)
 }
 
 func SaveBuffer() {
