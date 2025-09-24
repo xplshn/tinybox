@@ -4,8 +4,6 @@ I needed a simple way to build terminal interfaces in Go. Everything out there w
 
 So I wrote Tinybox. It's one Go file, about 1000 lines. You can read the whole thing in an afternoon. Copy it into your project and modify it however you want. No dependencies, no build systems, no package managers.
 
-It sticks to the plain POSIX termios/ioctl calls. The `termios_*.go` pair only map native ioctl constants, `select_*.go` hides the syscall differences, and `fdset_posix.go` flips the right bits so `select` works the same everywhere.
-
 <div align="center">
 <tr>
 <td><a href="https://github.com/user-attachments/assets/d1e53971-32e8-4d88-94c2-49b31d1255ca"><img width="300" alt="CGA" src="https://github.com/user-attachments/assets/d1e53971-32e8-4d88-94c2-49b31d1255ca" /></a></td>
@@ -51,7 +49,10 @@ make
 ```
 ## Design Choices
 
-Everything is in one file because splitting things up is how you end up with 47 files to do something simple. The code reads top to bottom - constants, types, low-level terminal stuff, then the public API. 
+The code reads top to bottom - constants, types, low-level terminal stuff, then the public API. 
+
+It sticks to the plain POSIX termios/ioctl calls. The `termios_*.go` pair only map native ioctl constants, `select_*.go` hides the syscall differences, and `fdset_posix.go` flips the right bits so `select` works the same everywhere.
+
 Two background goroutines handle signals; one for terminal resize (SIGWINCH) and one for resume from suspension (SIGCONT). These run in the background but don't do any terminal drawing, just update internal state and queue events. The main program loop is single-threaded.
 No Unicode normalization or grapheme clustering or any of that. The terminal handles displaying Unicode, we just pass it through.
 
