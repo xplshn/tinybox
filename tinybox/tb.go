@@ -291,9 +291,9 @@ func queryTermSize() (int, int, error) {
 	fdSet.Bits[fd/64] |= 1 << (uint(fd) % 64)
 	tv := syscall.Timeval{Sec: 1, Usec: 0}
 
-	n, err := syscall.Select(fd+1, fdSet, nil, nil, &tv)
-	if err != nil || n == 0 {
-		return 80, 24, fmt.Errorf("terminal size query timeout")
+	n := syscall.Select(fd+1, fdSet, nil, nil, &tv)
+	if n <= 0 {
+		return 80, 24, fmt.Errorf("timeout")
 	}
 
 	n, err = syscall.Read(syscall.Stdin, buf[:])
@@ -679,11 +679,8 @@ func PollEventTimeout(timeout time.Duration) (Event, error) {
 		Usec: int64((timeout % time.Second) / time.Microsecond),
 	}
 
-	n, err := syscall.Select(fd+1, fdSet, nil, nil, &tv)
-	if err != nil {
-		return Event{}, err
-	}
-	if n == 0 {
+	n := syscall.Select(fd+1, fdSet, nil, nil, &tv)
+	if n <= 0 {
 		return Event{}, fmt.Errorf("timeout")
 	}
 
@@ -1077,8 +1074,8 @@ func GetCursorPos() (x, y int) {
 	fdSet.Bits[fd/64] |= 1 << (uint(fd) % 64)
 	tv := syscall.Timeval{Sec: 1, Usec: 0} // 1 second timeout
 
-	n, err := syscall.Select(fd+1, fdSet, nil, nil, &tv)
-	if err != nil || n == 0 {
+	n := syscall.Select(fd+1, fdSet, nil, nil, &tv)
+	if n <= 0 {
 		return 0, 0
 	}
 
