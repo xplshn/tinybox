@@ -4,6 +4,8 @@ I needed a simple way to build terminal interfaces in Go. Everything out there w
 
 So I wrote Tinybox. It's one Go file, about 1000 lines. You can read the whole thing in an afternoon. Copy it into your project and modify it however you want. No dependencies, no build systems, no package managers.
 
+It sticks to the plain POSIX termios/ioctl calls. The `termios_*.go` pair only map native ioctl constants, `select_*.go` hides the syscall differences, and `fdset_posix.go` flips the right bits so `select` works the same everywhere.
+
 <div align="center">
 <tr>
 <td><a href="https://github.com/user-attachments/assets/d1e53971-32e8-4d88-94c2-49b31d1255ca"><img width="300" alt="CGA" src="https://github.com/user-attachments/assets/d1e53971-32e8-4d88-94c2-49b31d1255ca" /></a></td>
@@ -35,7 +37,7 @@ tb.PrintAt(0, 0, "some string")
 tb.Present()
 tb.PollEvent()  // wait for key
 ```
-Look at example.go if you want to see something more complex. It's a basic system monitor that shows how to handle resize, use colors, and create a simple table layout (screenshot).
+Look at example.go if you want to see something more complex. It's a basic system monitor that shows how to handle resize, use colors, and create a simple table layout (screenshot). That sample leans on Linux's statfs fields; tweak the disk bits if you're building it on OpenBSD or the other BSDs.
 The API won't change because there's no version to track. You have the code. If you need it to work differently, change it.
 
 There’s also a tiny demo app under `demo/` if you want to poke at the API without writing boilerplate. It uses the same primitives (draw cells, poll events, toggle mouse) and nothing more.
