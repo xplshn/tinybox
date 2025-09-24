@@ -36,26 +36,6 @@ import (
 )
 
 const (
-	TCGETS     = 0x5401
-	TCSETS     = 0x5402
-	TIOCGWINSZ = 0x5413
-	ICANON     = 0x2
-	ECHO       = 0x8
-	ISIG       = 0x1
-	IEXTEN     = 0x8000
-	BRKINT     = 0x2
-	ICRNL      = 0x100
-	INPCK      = 0x10
-	ISTRIP     = 0x20
-	IXON       = 0x400
-	OPOST      = 0x1
-	CS8        = 0x30
-	VMIN       = 6
-	VTIME      = 5
-	F_GETFL    = 3
-	F_SETFL    = 4
-	O_NONBLOCK = 0x800
-
 	ESC = "\033"
 	BEL = "\x07"
 
@@ -112,12 +92,7 @@ var (
 	resetColorSeq     = []byte(ResetColor)
 )
 
-type termios struct {
-	Iflag, Oflag, Cflag, Lflag uint32
-	Line                       uint8
-	Cc                         [32]uint8
-	Ispeed, Ospeed             uint32
-}
+type termios = syscall.Termios
 
 type winsize struct {
 	Row, Col, Xpixel, Ypixel uint16
@@ -288,10 +263,13 @@ func queryTermSize() (int, int, error) {
 	fd := int(syscall.Stdin)
 
 	fdSet := &syscall.FdSet{}
-	fdSet.Bits[fd/64] |= 1 << (uint(fd) % 64)
+	setFd(fdSet, fd)
 	tv := syscall.Timeval{Sec: 1, Usec: 0}
 
-	n := syscall.Select(fd+1, fdSet, nil, nil, &tv)
+	n, err := selectRead(fd, fdSet, &tv)
+	if err != nil {
+		return 80, 24, err
+	}
 	if n <= 0 {
 		return 80, 24, fmt.Errorf("timeout")
 	}
@@ -672,14 +650,17 @@ func PollEventTimeout(timeout time.Duration) (Event, error) {
 
 	fd := int(syscall.Stdin)
 	fdSet := &syscall.FdSet{}
-	fdSet.Bits[fd/64] |= 1 << (uint(fd) % 64)
+	setFd(fdSet, fd)
 
 	tv := syscall.Timeval{
 		Sec:  int64(timeout / time.Second),
 		Usec: int64((timeout % time.Second) / time.Microsecond),
 	}
 
-	n := syscall.Select(fd+1, fdSet, nil, nil, &tv)
+	n, err := selectRead(fd, fdSet, &tv)
+	if err != nil {
+		return Event{}, err
+	}
 	if n <= 0 {
 		return Event{}, fmt.Errorf("timeout")
 	}
@@ -1071,10 +1052,13 @@ func GetCursorPos() (x, y int) {
 	fd := int(syscall.Stdin)
 
 	fdSet := &syscall.FdSet{}
-	fdSet.Bits[fd/64] |= 1 << (uint(fd) % 64)
+	setFd(fdSet, fd)
 	tv := syscall.Timeval{Sec: 1, Usec: 0} // 1 second timeout
 
-	n := syscall.Select(fd+1, fdSet, nil, nil, &tv)
+	n, err := selectRead(fd, fdSet, &tv)
+	if err != nil {
+		return 0, 0
+	}
 	if n <= 0 {
 		return 0, 0
 	}
