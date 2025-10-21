@@ -3,7 +3,7 @@ package main
 import (
 	"log"
 
-	tb "tinybox-example/tinybox"
+	tb "github.com/nyangkosense/tinybox/pkg"
 )
 
 const boxW, boxH = 18, 7
