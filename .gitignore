@@ -1,0 +1,4 @@
+# Ignore hidden files and executables in examples subdirs
+.*
+examples/*/*
+!examples/*/*.go
