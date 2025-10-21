@@ -5,7 +5,7 @@ import (
 	"log"
 	"time"
 
-	tb "github.com/nyangkosense/tinybox/pkg"
+	tb "github.com/xplshn/tinybox/pkg"
 )
 
 type model struct {
