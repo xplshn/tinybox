@@ -9,8 +9,9 @@ import (
 	"runtime"
 	"strings"
 	"syscall"
-	tb "tinybox-example/tinybox"
 	"time"
+
+	tb "github.com/nyangkosense/tinybox/pkg"
 )
 
 type SystemInfo struct {
